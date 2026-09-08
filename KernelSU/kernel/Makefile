@@ -11,8 +11,8 @@ MDIR := $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 $(info -- KDIR: $(KDIR))
 $(info -- MDIR: $(MDIR))
 
-# compliant to last upstream kernel change as of 3497a56
-CFLAGS_ksu.o += -DKSU_VERSION=32603
+# compliant to last upstream kernel change as of e727186
+CFLAGS_ksu.o += -DKSU_VERSION=32625
 
 ifndef KSU_EXPECTED_SIZE
 KSU_EXPECTED_SIZE := 0x033b
@@ -108,6 +108,7 @@ CFLAGS_ksu.o += $(call cc-option, -Wno-format)
 CFLAGS_ksu.o += $(call cc-option, -Wno-macro-redefined)
 CFLAGS_ksu.o += $(call cc-option, -Wno-incompatible-pointer-types-discards-qualifiers)
 CFLAGS_ksu.o += $(call cc-option, -Wno-discarded-qualifiers)
+CFLAGS_ksu.o += $(call cc-option, -Wno-deprecated-octal-literals)
 
 # dont be too strict
 CFLAGS_REMOVE_ksu.o += -Werror
@@ -118,17 +119,39 @@ CFLAGS_ksu.o += $(call cc-option, -Wframe-larger-than=1024)
 # to make sure we can use builtins
 CFLAGS_REMOVE_ksu.o += -fno-builtin
 
-# Os to O2, we dont care for anything else. O3 vs O2 codegen on hotptah is same.
+# Os to O2, we dont care for anything else. O3 vs O2 codegen on hotpath is same.
 ifeq ($(CONFIG_CC_OPTIMIZE_FOR_SIZE),y)
 CFLAGS_REMOVE_ksu.o += -Oz
 CFLAGS_REMOVE_ksu.o += -Os
 CFLAGS_ksu.o += -O2
 endif
 
-# inline atomics
+# while we can flag for gnu11 if !gnu17, theres an issue GCC < 5.1 which is a bit nasty on mutexes with k3.x code.
+# so for those, we literally just dont flag anything, gnu17 flag wont exist on them.
+CFLAGS_ksu.o += $(call cc-option,-std=gnu17)
+
+# now attempt to enable gnu23
+CFLAGS_ksu.o += $(call cc-option, -std=gnu23)
+CFLAGS_ksu.o += $(call cc-option, -std=gnu2y)
+
+#ifeq ($(shell $(CC) -v 2>&1 | grep -q 'clang'; echo $$?),0)
+# $(info -- KernelSU/CC: clang!)
+#endif
+
+# always inline atomics
+# clang and gcc CAN try to drop a runtime C11 atomics detector
+# https://github.com/llvm/llvm-project/blob/main/llvm/test/CodeGen/AArch64/atomic-ops.ll
+# however this is problematic to us as those cannot be linked to the kernel (e.g. __aarch64_cas4_acq, __aarch64_cas4_rel)
+# so for LKM they just get plain ARMv8.0 atomics, not LSE / LSE2, even when the device is capable of LSE.
 ifeq ($(CONFIG_ARM64),y)
 CFLAGS_ksu.o += $(call cc-option, -mno-outline-atomics)
 endif
+
+# Optional: for LKM users, I recommend users to build it themselves with optimizations.
+# you can get optimized codegen especially around atomics.
+# hint: decode your own /proc/cpuinfo and check it here https://github.com/llvm/llvm-project/blob/main/llvm/lib/TargetParser/Host.cpp
+# comment it out and put your cpu / arch here
+# CFLAGS_ksu.o += -mcpu=cortex-a76 -mtune=cortex-a76
 
 ifneq ($(CONFIG_KSU_DEBUG),y)
 # strip, remove tracing / profiling
@@ -137,8 +160,13 @@ CFLAGS_ksu.o += -g0 -fno-unwind-tables -fno-asynchronous-unwind-tables -fomit-fr
 CFLAGS_ksu.o += $(call cc-option, -momit-leaf-frame-pointer)
 
 # no profiling
-CFLAGS_REMOVE_ksu.o = $(CC_FLAGS_FTRACE)
+CFLAGS_REMOVE_ksu.o += $(CC_FLAGS_FTRACE)
 CFLAGS_REMOVE_ksu.o += -pg
+
+# no need for stack init
+CFLAGS_REMOVE_ksu.o += -ftrivial-auto-var-init=pattern
+CFLAGS_REMOVE_ksu.o += -ftrivial-auto-var-init=zero
+CFLAGS_REMOVE_ksu.o += -enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang
 
 # if cflags can be macro'd, this will be called 'TRUST_ME'
 CFLAGS_ksu.o += -fno-stack-protector -fno-stack-check
