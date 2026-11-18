@@ -18,9 +18,9 @@
 
 #include "zcomp.h"
 
-static const char * const backends[] = {
+static const char *const backends[] = {
 #if IS_ENABLED(CONFIG_CRYPTO_LZO)
-	"lzo",
+	"lzo-rle",
 #endif
 #if IS_ENABLED(CONFIG_CRYPTO_LZ4)
 	"lz4",
@@ -86,11 +86,11 @@ ssize_t zcomp_available_show(const char *comp, char *buf)
 	for (i = 0; i < ARRAY_SIZE(backends); i++) {
 		if (!strcmp(comp, backends[i])) {
 			known_algorithm = true;
-			sz += scnprintf(buf + sz, PAGE_SIZE - sz - 2,
-					"[%s] ", backends[i]);
+			sz += scnprintf(buf + sz, PAGE_SIZE - sz - 2, "[%s] ",
+					backends[i]);
 		} else {
-			sz += scnprintf(buf + sz, PAGE_SIZE - sz - 2,
-					"%s ", backends[i]);
+			sz += scnprintf(buf + sz, PAGE_SIZE - sz - 2, "%s ",
+					backends[i]);
 		}
 	}
 
@@ -99,8 +99,7 @@ ssize_t zcomp_available_show(const char *comp, char *buf)
 	 * entry in `backends'.
 	 */
 	if (!known_algorithm && crypto_has_comp(comp, 0, 0) == 1)
-		sz += scnprintf(buf + sz, PAGE_SIZE - sz - 2,
-				"[%s] ", comp);
+		sz += scnprintf(buf + sz, PAGE_SIZE - sz - 2, "[%s] ", comp);
 
 	sz += scnprintf(buf + sz, PAGE_SIZE - sz, "\n");
 	return sz;
@@ -116,8 +115,8 @@ void zcomp_stream_put(struct zcomp *comp)
 	put_cpu_ptr(comp->stream);
 }
 
-int zcomp_compress(struct zcomp_strm *zstrm,
-		const void *src, unsigned int *dst_len)
+int zcomp_compress(struct zcomp_strm *zstrm, const void *src,
+		   unsigned int *dst_len)
 {
 	/*
 	 * Our dst memory (zstrm->buffer) is always `2 * PAGE_SIZE' sized
@@ -135,19 +134,16 @@ int zcomp_compress(struct zcomp_strm *zstrm,
 	 */
 	*dst_len = PAGE_SIZE * 2;
 
-	return crypto_comp_compress(zstrm->tfm,
-			src, PAGE_SIZE,
-			zstrm->buffer, dst_len);
+	return crypto_comp_compress(zstrm->tfm, src, PAGE_SIZE, zstrm->buffer,
+				    dst_len);
 }
 
-int zcomp_decompress(struct zcomp_strm *zstrm,
-		const void *src, unsigned int src_len, void *dst)
+int zcomp_decompress(struct zcomp_strm *zstrm, const void *src,
+		     unsigned int src_len, void *dst)
 {
 	unsigned int dst_len = PAGE_SIZE;
 
-	return crypto_comp_decompress(zstrm->tfm,
-			src, src_len,
-			dst, &dst_len);
+	return crypto_comp_decompress(zstrm->tfm, src, src_len, dst, &dst_len);
 }
 
 int zcomp_cpu_up_prepare(unsigned int cpu, struct hlist_node *node)
