@@ -30,15 +30,6 @@ static __nocfi int ksu_inode_rename(struct inode *old_inode, struct dentry *old_
 	return inode_rename_fn(old_inode, old_dentry, new_inode, new_dentry);
 }
 
-static void (*bprm_committing_creds_fn)(struct linux_binprm *bprm) __read_mostly = nullptr;
-static __nocfi void ksu_bprm_committing_creds(struct linux_binprm *bprm)
-{
-#ifdef CONFIG_KSU_FEATURE_SULOG
-	ksu_sulog_emit_bprm((const char *)bprm->filename);
-#endif
-	bprm_committing_creds_fn(bprm); // NOTE: void LSM hook
-}
-
 static int (*file_permission_fn)(struct file *file, int mask) __read_mostly = nullptr;
 static __nocfi int ksu_file_permission(struct file *file, int mask)
 {
@@ -72,6 +63,11 @@ capability_fn:
 }
 #endif
 
+#define SETPROCATTR_TYPE_task	struct task_struct *p, char *name, void *, size_t
+#define SETPROCATTR_TYPE_name	const char *name, void *, size_t
+#define SETPROCATTR_TYPE_lsm	const char *lsm, const char *name, void *, size_t
+#define SETPROCATTR_TYPE_lsmid	int lsmid, const char *name, void *, size_t
+
 static void *setprocattr_fn __read_mostly = nullptr;
 static __nocfi int ksu_setprocattr_new(const char *name, void *value, size_t size)
 {
@@ -79,46 +75,51 @@ static __nocfi int ksu_setprocattr_new(const char *name, void *value, size_t siz
 	return ((typeof(ksu_setprocattr_new) *)setprocattr_fn)(name, value, size);
 }
 
-static __nocfi int ksu_setprocattr_old(struct task_struct *p, char *name, void *value, size_t size)
+static __nocfi int ksu_setprocattr_task(struct task_struct *p, char *name, void *value, size_t size)
 {
 	ksu_hide_setprocattr_inline(name, value, size);
-	return ((typeof(ksu_setprocattr_old) *)setprocattr_fn)(p, name, value, size);
+	return ((typeof(ksu_setprocattr_task) *)setprocattr_fn)(p, name, value, size);
 }
 
-#define SETPROCATTR_TYPE_old	struct task_struct *, char *, void *, size_t
-#define SETPROCATTR_TYPE_new1	const char *, void *, size_t
-#define SETPROCATTR_TYPE_new2	const char *lsm, const char *, void *, size_t
-
-/**
- * the pragma is to workaround GCC 4.9's broken designated initializer.
- * - avoid initializing it casted.
- * e.g. (void *)ksu_setprocattr_old, (void *)ksu_setprocattr_new
- */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wincompatible-pointer-types"
-
-#if 0 // small demo of __builtin_choose_expr vs C11 _Generic
-#define OVERLOAD_SETPROCATTR(fn) __builtin_choose_expr(					\
-        __builtin_types_compatible_p(typeof(fn), int (*)(SETPROCATTR_TYPE_old)),	\
-        ksu_setprocattr_old,								\
-        ksu_setprocattr_new								\
+#define ksu_setprocattr_overloaded _Generic(			\
+(security_setprocattr),						\
+	int (*)(SETPROCATTR_TYPE_task)  :ksu_setprocattr_task,	\
+	int (*)(SETPROCATTR_TYPE_name)  :ksu_setprocattr_new, 	\
+	int (*)(SETPROCATTR_TYPE_lsm)   :ksu_setprocattr_new,	\
+	int (*)(SETPROCATTR_TYPE_lsmid) :ksu_setprocattr_new	\
 )
-#else
-#define OVERLOAD_SETPROCATTR(fn) _Generic(			\
-(fn),								\
-	int (*)(SETPROCATTR_TYPE_old)	:ksu_setprocattr_old,	\
-	int (*)(SETPROCATTR_TYPE_new1)	:ksu_setprocattr_new, 	\
-	int (*)(SETPROCATTR_TYPE_new2)	:ksu_setprocattr_new 	\
-)
-#endif
 
-// now choose what we have
-static typeof(security_setprocattr) *ksu_setprocattr __read_mostly = OVERLOAD_SETPROCATTR(security_setprocattr);
-#pragma GCC diagnostic pop
-#undef SETPROCATTR_TYPE_new2
-#undef SETPROCATTR_TYPE_new1
-#undef SETPROCATTR_TYPE_old
-#undef OVERLOAD_SETPROCATTR
+struct mnt_idmap;
+struct user_namespace;
+#define INODE_SETXATTR_TYPE_idmap	struct mnt_idmap *idmap, struct dentry *, const char *, const void *, size_t, int
+#define INODE_SETXATTR_TYPE_userns	struct user_namespace *mnt_userns, struct dentry *, const char *, const void *, size_t, int
+#define INODE_SETXATTR_TYPE_legacy	struct dentry *, const char *, const void *, size_t, int
+
+static void *inode_setxattr_fn __read_mostly = nullptr;
+static __nocfi int ksu_inode_setxattr_idmap(struct mnt_idmap *idmap, struct dentry *dentry, const char *name, const void *value, size_t size, int flags)
+{
+	ksu_hide_setxattr_inline(name, value, size);
+	return ((typeof(ksu_inode_setxattr_idmap) *)inode_setxattr_fn)(idmap, dentry, name, value, size, flags);
+}
+
+static __nocfi int ksu_inode_setxattr_userns(struct user_namespace *mnt_userns, struct dentry *dentry, const char *name, const void *value, size_t size, int flags)
+{
+	ksu_hide_setxattr_inline(name, value, size);
+	return ((typeof(ksu_inode_setxattr_userns) *)inode_setxattr_fn)(mnt_userns, dentry, name, value, size, flags);
+}
+
+static __nocfi int ksu_inode_setxattr_legacy(struct dentry *dentry, const char *name, const void *value, size_t size, int flags)
+{
+	ksu_hide_setxattr_inline(name, value, size);
+	return ((typeof(ksu_inode_setxattr_legacy) *)inode_setxattr_fn)(dentry, name, value, size, flags);
+}
+
+#define ksu_inode_setxattr_overloaded _Generic(				\
+(security_inode_setxattr),						\
+	int (*)(INODE_SETXATTR_TYPE_idmap)  :ksu_inode_setxattr_idmap,	\
+	int (*)(INODE_SETXATTR_TYPE_userns) :ksu_inode_setxattr_userns, \
+	int (*)(INODE_SETXATTR_TYPE_legacy) :ksu_inode_setxattr_legacy 	\
+)
 
 /**
  *
@@ -190,11 +191,9 @@ static int ksu_hack_lsm_slot(void *hook_head, uintptr_t *old_ptr, uintptr_t new_
 	else
 		pr_info("LSM: 0x%lx found at slot 0x%lx\n", current_hook, hook_slot_addr);
 
-	int err = ksu_write_to_readonly_slot(hook_slot_addr, new_ptr);
-	if (err) {
-		pr_err("LSM: ksu_write_to_readonly_slot err: %d\n", err);
+	int err = patch_ro_slot(hook_slot_addr, new_ptr);
+	if (err)
 		return 1;
-	}
 
 	pr_info("LSM: 0x%lx written to slot\n", new_ptr);
 	return 0;
@@ -250,7 +249,7 @@ increment:
 
 #define LSM_HACK_INIT(hook_name, hook_fn)							\
 do {												\
-	pr_info("LSM: Initializing hook for %s\n", #hook_name);					\
+	pr_info("LSM: Initializing hook for %s -> %s\n", #hook_name, #hook_fn);			\
 	void *hook_head = (void *)&security_hook_heads.hook_name;				\
 	uintptr_t *old_ptr = (uintptr_t *)&hook_name##_fn;					\
 	int ret = ksu_hack_lsm_slot(hook_head, old_ptr, (uintptr_t)(hook_fn), #hook_name);	\
@@ -304,11 +303,9 @@ static __init void ksu_lsm_hook_init(void)
 {
 	LSM_HACK_INIT(task_fix_setuid, ksu_task_fix_setuid);
 	LSM_HACK_INIT(inode_rename, ksu_inode_rename);
-	LSM_HACK_INIT(setprocattr, ksu_setprocattr);
 
-#ifdef CONFIG_KSU_FEATURE_SULOG
-	LSM_HACK_INIT(bprm_committing_creds, ksu_bprm_committing_creds);
-#endif
+	LSM_HACK_INIT(setprocattr, ksu_setprocattr_overloaded);
+	LSM_HACK_INIT(inode_setxattr, ksu_inode_setxattr_overloaded);
 
 #if !defined(CONFIG_KSU_TAMPER_SYSCALL_TABLE) && !defined(CONFIG_KSU_HACK_ARM64_BRANCH_LINK)
 	LSM_HACK_INIT(file_permission, ksu_file_permission);
@@ -322,7 +319,13 @@ static __init void ksu_lsm_hook_init(void)
 
 }
 
-static void __init ksu_core_init(void)
-{
-	ksu_lsm_hook_init();
-}
+#undef INODE_SETXATTR_TYPE_idmap
+#undef INODE_SETXATTR_TYPE_userns
+#undef INODE_SETXATTR_TYPE_legacy
+#undef ksu_inode_setxattr_overloaded
+
+#undef SETPROCATTR_TYPE_task
+#undef SETPROCATTR_TYPE_name
+#undef SETPROCATTR_TYPE_lsm
+#undef SETPROCATTR_TYPE_lsmid
+#undef ksu_setprocattr_overloaded

@@ -13,7 +13,8 @@ static char cached_manager_apk_path[DATA_PATH_LEN];
 	!strncmp(tgt, name, sizeof(name));		\
 })
 #define is_kowsu_apk(tgt) extra_manager_apk(tgt, "com.kowx712.supermanager")
-#define test_extra_pkgs(tgt) is_kowsu_apk(tgt)
+#define is_midorisu_apk(tgt) extra_manager_apk(tgt, "com.midori.supermanager")
+#define test_extra_pkgs(tgt) (is_kowsu_apk(tgt) || is_midorisu_apk(tgt))
 
 #define SYSTEM_PACKAGES_LIST_PATH "/data/system/packages.list"
 
@@ -414,9 +415,10 @@ void track_throne(bool prune_only)
 	goto *label;
 
 first_run:
-	if (guarded_mutex_lock(&throne_tracker_mutex))
-		throne_tracker_fn(prune_only);
-	
+	mutex_lock(&throne_tracker_mutex);
+	throne_tracker_fn(prune_only);
+	mutex_unlock(&throne_tracker_mutex);
+
 	label = &&threaded;
 	return;
 threaded:
